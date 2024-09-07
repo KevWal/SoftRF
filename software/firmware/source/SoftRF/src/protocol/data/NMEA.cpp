@@ -117,6 +117,12 @@ TinyGPSCustom V_Filter;
 TinyGPSCustom V_PowerSave;
 TinyGPSCustom V_Team;    /* 19 */
 #endif /* USE_SKYVIEW_CFG */
+
+// Define the FLARM config format
+TinyGPSCustom F_PFLAC_MODE;
+TinyGPSCustom F_PFLAC_KEY;
+TinyGPSCustom F_PFLAC_VALUE;
+
 #endif /* USE_NMEA_CFG */
 
 static char *ltrim(char *s)
@@ -202,6 +208,15 @@ void NMEA_setup()
   V_PowerSave.begin    (gnss, pskv_c, term_num++);
   V_Team.begin         (gnss, pskv_c, term_num  ); /* 19 */
 #endif /* USE_SKYVIEW_CFG */
+
+  // Define the FLARM config format
+  // PFLAC,MODE,KEY,VALUE
+  // input  MODE = (S(et) | R(eq))
+  // output MODE = A(sked)
+  F_PFLAC_MODE.begin    (gnss, "PFLAC", 1);
+  F_PFLAC_KEY.begin     (gnss, "PFLAC", 2);
+  F_PFLAC_VALUE.begin   (gnss, "PFLAC", 3);
+
 #endif /* USE_NMEA_CFG */
 
 #if defined(NMEA_TCP_SERVICE)
@@ -877,6 +892,48 @@ void NMEA_Process_SRF_SKV_Sentences()
             nmea_cfg_restart();
           }
         }
+      }
+
+      //
+      // handling the PFLAC Messages
+      //
+#if !defined(USE_NMEA_CFG)
+      uint8_t nmea_dest = settings->nmea_out;
+#else
+      uint8_t nmea_dest = C_NMEA_Source;
+#endif
+
+      char pflac_buf[MAX_PSRFC_LEN];
+      if (F_PFLAC_MODE.isUpdated()) {
+          char    mode = '\0';
+
+          // Mode
+          if        (strncmp(F_PFLAC_MODE.value(), "S", 1) == 0) {
+              // Set input
+              mode = 'S';
+          } else if (strncmp(F_PFLAC_MODE.value(), "A", 1) == 0) {
+              // Asked output
+              mode = 'A';
+          } else if (strncmp(F_PFLAC_MODE.value(), "R", 1) == 0) {
+              // Request input
+          } else {
+              // Response - Error this is an unsupported message
+          }
+
+          // default ERROR message
+          snprintf_P(pflac_buf, sizeof(pflac_buf), PSTR("$PFLAC,A,ERROR*"));
+
+          // Key
+          if (strncmp(F_PFLAC_KEY.value(), "ID", 2) == 0) {
+              char buf[16];
+              strncpy(buf, F_PFLAC_VALUE.value(), sizeof(buf));
+              ThisAircraft.addr = (uint32_t) (strtoul(buf, NULL, 16) & 0xFFFFFF);
+              snprintf_P(pflac_buf, sizeof(pflac_buf), PSTR("$PFLAC,A,ID,%06X*"), ThisAircraft.addr);
+          }
+
+          // Value
+          NMEA_add_checksum(pflac_buf, sizeof(pflac_buf) - strlen(pflac_buf));
+          NMEA_Out(nmea_dest, (byte *) pflac_buf, strlen(pflac_buf), false);
       }
 
 #if defined(USE_OGN_ENCRYPTION)
